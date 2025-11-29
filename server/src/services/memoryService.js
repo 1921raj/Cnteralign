@@ -1,40 +1,46 @@
-import Form from '../models/Form.js';
-
-// Simple keyword extraction (mock implementation for now)
-// In a real app, use an LLM or NLP library to extract keywords
-const extractKeywords = (text) => {
-    const stopWords = ['i', 'need', 'a', 'an', 'form', 'with', 'and', 'for', 'the', 'of', 'in', 'on', 'at', 'to'];
-    return text.toLowerCase().split(' ')
-        .filter(word => !stopWords.includes(word) && word.length > 2);
-};
+import { generateEmbedding } from './geminiService.js';
+import { queryVectors } from './pineconeService.js';
 
 export const getRelevantForms = async (userId, prompt) => {
     try {
-        const keywords = extractKeywords(prompt);
+        console.log(`Retrieving memory for prompt: "${prompt}"`);
 
-        // Find forms that match keywords in purpose or keywords field
-        // Using MongoDB text search or regex
-        // Since we added a text index, we can use $text search if we had full text search enabled
-        // For now, let's use a simple regex on purpose
+        // 1. Generate embedding for the prompt
+        const embedding = await generateEmbedding(prompt);
 
-        const regexQueries = keywords.map(kw => ({ purpose: { $regex: kw, $options: 'i' } }));
+        // 2. Query Pinecone for similar forms
+        // We filter by userId to ensure users only see their own relevant history
+        const matches = await queryVectors(embedding, 5, userId);
 
-        if (regexQueries.length === 0) return [];
+        if (!matches || matches.length === 0) {
+            console.log("No relevant memory found.");
+            return [];
+        }
 
-        const forms = await Form.find({
-            user: userId,
-            $or: regexQueries
-        })
-            .select('purpose schema.fields') // Select only necessary fields for context
-            .limit(5) // Top-K (5)
-            .sort({ createdAt: -1 });
+        console.log(`Found ${matches.length} relevant forms from memory.`);
 
-        return forms.map(f => ({
-            purpose: f.purpose,
-            fields: f.schema.fields.map(field => field.name) // Simplify schema for context
-        }));
+        // 3. Extract relevant info from metadata
+        return matches.map(match => {
+            let fields = [];
+            try {
+                // Handle potential stringified fields or array
+                fields = typeof match.metadata.fields === 'string'
+                    ? JSON.parse(match.metadata.fields)
+                    : match.metadata.fields || [];
+            } catch (e) {
+                console.warn("Error parsing fields metadata:", e);
+            }
+
+            return {
+                purpose: match.metadata.purpose,
+                fields: fields,
+                score: match.score
+            };
+        });
+
     } catch (error) {
         console.error("Memory Retrieval Error:", error);
+        // Fail gracefully - return empty context so generation can still proceed
         return [];
     }
 };

@@ -3,6 +3,8 @@ import { generateFormSchema } from '../services/geminiService.js';
 import { getRelevantForms } from '../services/memoryService.js';
 import Form from '../models/Form.js';
 import jwt from 'jsonwebtoken';
+import { generateEmbedding } from '../services/geminiService.js';
+import { upsertVector } from '../services/pineconeService.js';
 
 const router = express.Router();
 
@@ -54,6 +56,28 @@ router.post('/generate', protect, async (req, res) => {
         });
 
         await newForm.save();
+
+        // 4. Store in Memory (Pinecone)
+        // We do this asynchronously so we don't block the response too long, 
+        // but for reliability in this demo we'll await it or just fire and forget with a catch.
+        try {
+            const embedding = await generateEmbedding(prompt);
+
+            // Extract field names for metadata to help with context later
+            const fieldNames = schema.fields ? schema.fields.map(f => f.name) : [];
+
+            await upsertVector(newForm._id, embedding, {
+                userId: req.user._id.toString(),
+                purpose: prompt,
+                title: schema.title || 'Untitled',
+                fields: JSON.stringify(fieldNames),
+                createdAt: new Date().toISOString()
+            });
+            console.log("Form stored in memory successfully.");
+        } catch (memoryError) {
+            console.error("Failed to store form in memory:", memoryError);
+            // Non-blocking error for the user
+        }
 
         res.json(newForm);
     } catch (error) {

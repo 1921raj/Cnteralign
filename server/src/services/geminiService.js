@@ -99,3 +99,15 @@ Do not include markdown formatting like \`\`\`json. Just the raw JSON.
         return generateMockForm(prompt);
     }
 };
+
+export const generateEmbedding = async (text) => {
+    try {
+        const model = genAI.getGenerativeModel({ model: "embedding-001" });
+        const result = await model.embedContent(text);
+        const embedding = result.embedding;
+        return embedding.values;
+    } catch (error) {
+        console.error("Embedding Generation Error:", error.message);
+        throw error;
+    }
+};
